@@ -1,0 +1,115 @@
+#!/bin/sh
+
+DRSLV_VERSION="2.0.0"
+
+DRSLV_SUCCESS=0
+DRSLV_ERROR_WRONG_PARAMS=1
+DRSLV_ERROR_PROCESS_FAILED=2
+DRSLV_ERROR_LDD_NOT_FOUND=3
+DRSLV_ERROR_LDD_NOT_SUPPORTED=4
+DRSLV_ERROR_BINARY_NOT_FOUND=5
+
+usage() {
+    echo "dependency resolve - distroless packaging support v${DRSLV_VERSION}
+
+usage: ${0} [ldd_binary_path] ...[target_binary_paths]
+"
+}
+
+version() {
+    echo "${DRSLV_VERSION}"
+}
+
+check_ldd() {
+    if [ ! -f "${1}" ]; then
+        echo "ldd not found: ${1}" >&2
+        exit ${DRSLV_ERROR_LDD_NOT_FOUND}
+    fi
+    
+    ldd_version=$("${1}" --version 2>&1)
+    if ! echo "${ldd_version}" | grep -qE '(GLIBC|musl libc)'; then
+        echo "ldd executable not supported: ${1}" >&2
+        exit ${DRSLV_ERROR_LDD_NOT_SUPPORTED}
+    fi
+}
+
+check_binary() {
+    if [ ! -e "${1}" ]; then
+        echo "binary not found: ${1}" >&2
+        exit ${DRSLV_ERROR_BINARY_NOT_FOUND}
+    fi
+}
+
+resolve_symlink() {
+    path="${1}"
+    result="${path}"
+    while [ -L "${path}" ]; do
+        link_target=$(readlink "${path}")
+        if echo "${link_target}" | grep -q '^/'; then
+            path="${link_target}"
+        else
+            path="$(cd "$(dirname "${path}")" && pwd)/${link_target}"
+        fi
+        result="${result} ${path}"
+    done
+    echo "${result}"
+}
+
+dependency_resolve() {
+    ldd_path="${1}"
+    binary_path="${2}"
+    result=""
+
+    resolved_paths=$(resolve_symlink "${binary_path}")
+    for path in ${resolved_paths}; do
+        result="${result} ${path}"
+        if [ -f "${path}" ]; then
+            ldd_output=$("${ldd_path}" "${path}" 2>&1)
+            if ! echo "${ldd_output}" | grep -qE '(not a dynamic executable|Not a valid dynamic program)'; then
+                while read -r line; do
+                    library=$(echo "${line}" | awk '{print $3}')
+                    if [ -n "${library}" ] && [ "${library}" != "not" ]; then
+                        result="${result} $(dependency_resolve "${ldd_path}" "${library}")"
+                    fi
+                done << EOF
+${ldd_output}
+EOF
+            fi
+        fi
+    done
+
+    echo "${result}"
+}
+
+if [ $# -lt 2 ]; then
+    case "${1}" in
+        -v|--version)
+            version
+            exit ${DRSLV_SUCCESS}
+            ;;
+        -h|--help)
+            usage
+            exit ${DRSLV_SUCCESS}
+            ;;
+        *)
+            usage
+            exit ${DRSLV_ERROR_WRONG_PARAMS}
+            ;;
+    esac
+fi
+
+ldd_path="${1}"
+check_ldd "${ldd_path}"
+
+shift
+for binary_path in "$@"; do
+    check_binary "${binary_path}"
+done
+
+dependencies=""
+for binary_path in "$@"; do
+    dependencies="${dependencies} $(dependency_resolve "${ldd_path}" "${binary_path}")"
+done
+
+echo "${dependencies}" | tr ' ' '\n' | sort | uniq | sed '/^$/d'
+exit ${DRSLV_SUCCESS}
