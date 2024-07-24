@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        arch: ["amd64", "arm64/v8", "arm/v7"]
+        platform: ["linux/amd64", "linux/arm64/v8", "linux/arm/v7"]
         busybox: ["glibc", "musl", "uclibc"]
     steps:
       - name: Checkout
@@ -26,12 +26,12 @@ jobs:
       - name: Build container
         uses: docker/build-push-action@v6
         with:
-          build-args: ARCH=${{ matrix.arch }}
+          build-args: PLATFORM=${{ matrix.platform }}
           context: .
           file: ./Dockerfile
           load: true
           push: false
-          tags: test-${{ matrix.arch }}-${{ matrix.busybox }}
+          tags: test-${{ matrix.platform }}-${{ matrix.busybox }}
       - name: Test 
         run: |
-          test "$(docker run --rm -i "test-${{ matrix.arch }}-${{ matrix.busybox }}" -c "php -r 'echo shell_exec(\"whoami\");'")" = "nonroot"
+          test "$(docker run --rm -i "test-${{ matrix.platform }}-${{ matrix.busybox }}" -c "php -r 'echo shell_exec(\"whoami\");'")" = "nonroot"
