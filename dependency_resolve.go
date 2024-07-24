@@ -15,60 +15,38 @@ import (
 
 type smartDict struct {
 	mu sync.RWMutex
-	m  map[string]bool
+	m  map[string]struct{}
 }
 
 func newSmartDict(allocSize int) *smartDict {
-	return &smartDict{m: make(map[string]bool, allocSize)}
+	return &smartDict{m: make(map[string]struct{}, allocSize)}
 }
 
-func (s *smartDict) Exists(key string) bool {
+func (s *smartDict) exists(key string) bool {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
 	_, exists := s.m[key]
+	s.mu.RUnlock()
 	return exists
 }
 
-func (s *smartDict) Append(key string) {
+func (s *smartDict) append(key string) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.m[key] = true
+	s.m[key] = struct{}{}
+	s.mu.Unlock()
 }
 
-func (s *smartDict) AppendAll(keys []string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for _, v := range keys {
-		s.m[v] = true
-	}
-}
-
-func (s *smartDict) Keys() []string {
+func (s *smartDict) keys() []string {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
 	keys := make([]string, 0, len(s.m))
 	for k := range s.m {
 		keys = append(keys, k)
 	}
+	s.mu.RUnlock()
 	return keys
 }
 
-func (s *smartDict) Remove(key string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.m, key)
-}
-
-func (s *smartDict) RemoveAll(keys []string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for _, v := range keys {
-		delete(s.m, v)
-	}
-}
-
 func version() {
-	fmt.Println("3.0.0")
+	fmt.Println("3.0.1")
 }
 
 func usage() {
@@ -110,74 +88,61 @@ func checkBins(bins []string) []string {
 	return bins
 }
 
-func depResolve(sd *smartDict, ldpaths []string, path string) {
-	if sd.Exists(path) {
+func depResolve(wg *sync.WaitGroup, sd *smartDict, ldpaths []string, path string) {
+	if sd.exists(path) {
 		return
 	}
 
-	var wg sync.WaitGroup
 	wg.Add(1)
-
 	go func() {
 		defer wg.Done()
 
 		fi, err := os.Lstat(path)
 		if err != nil {
-			panic("os.Lstat failed: " + path)
+			log.Fatalf("os.Lstat failed: %s, error: %v", path, err)
 		}
 
-		sd.Append(path)
+		sd.append(path)
 		if fi.Mode()&os.ModeSymlink != 0 {
 			// symlink
 			lp, err := os.Readlink(path)
 			if err != nil {
-				panic("os.Readlink failed: " + path)
+				log.Fatalf("os.Readlink failed: %s, error: %v", path, err)
 			}
 
 			if !filepath.IsAbs(lp) {
 				lp = filepath.Join(filepath.Dir(path), lp)
 			}
 
-			depResolve(sd, ldpaths, lp)
+			depResolve(wg, sd, ldpaths, lp)
 		} else {
-			f, err := os.Open(path)
+			f, err := elf.Open(path)
 			if err != nil {
-				panic("os.Open failed: " + path)
+				// Not ELF file
+				return
+			}
+			defer f.Close()
+
+			libs, err := f.ImportedLibraries()
+			if err != nil {
+				log.Fatalf("elf.ImportedLibraries() failed: %s, error: %v", path, err)
 			}
 
-			magic := make([]byte, 4)
-			_, err = f.Read(magic)
-			if err != nil {
-				panic("file.Read failed: " + path)
-			}
-
-			if string(magic) == "\x7FELF" {
-				// ELF
-				elf, err := elf.Open(path)
-				if err != nil {
-					panic("elf.Open failed: " + path)
-				}
-				defer elf.Close()
-
-				libs, err := elf.ImportedLibraries()
-				if err != nil {
-					panic("elf.ImportedLibraries() failed: " + path)
-				}
-
-				for _, lib := range libs {
+			for _, lib := range libs {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
 					for _, ldpath := range ldpaths {
 						fpath := filepath.Join(ldpath, lib)
 						if _, err := os.Stat(fpath); err == nil {
-							depResolve(sd, ldpaths, fpath)
+							depResolve(wg, sd, ldpaths, fpath)
 							break
 						}
 					}
-				}
+				}()
 			}
 		}
 	}()
-
-	wg.Wait()
 }
 
 func readLdSoConf(file string, paths *[]string) error {
@@ -236,14 +201,10 @@ func main() {
 	prepareExec(os.Args)
 
 	switch os.Args[1] {
-	case "-h":
-		fallthrough
-	case "--help":
+	case "-h", "--help":
 		usage()
 		os.Exit(0)
-	case "-v":
-		fallthrough
-	case "--version":
+	case "-v", "--version":
 		version()
 		os.Exit(0)
 	}
@@ -255,11 +216,13 @@ func main() {
 		log.Fatalf("Failed get LDPATH: %v", err)
 	}
 
+	var wg sync.WaitGroup
 	for _, bin := range bins {
-		depResolve(sd, ldpaths, bin)
+		depResolve(&wg, sd, ldpaths, bin)
 	}
+	wg.Wait()
 
-	libs := sd.Keys()
+	libs := sd.keys()
 	slices.Sort(libs)
 	for _, v := range libs {
 		fmt.Println(v)

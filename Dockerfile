@@ -20,6 +20,7 @@ COPY "./" "/build"
 RUN cd "/build" \
  &&   go get \
  &&   go build -o "/usr/local/bin/dependency_resolve" . \
+ &&   strip --strip-all "/usr/local/bin/dependency_resolve" \
  && cd -
 
 FROM --platform="${PLATFORM}" ${BUSYBOX} AS busybox
@@ -35,13 +36,13 @@ COPY --from=golang "/usr/local/bin/dependency_resolve" "/usr/local/bin/dependenc
 RUN /bin/sh -c "${BASE_PKG_INSTALL_CMD} ${BASE_PKGS}" \
  && /usr/local/bin/dependency_resolve \
       $(echo "${BASE_BINS}" | xargs which) \
-    | xargs -I {} sh -c 'mkdir -p /root/rootfs/$(dirname "{}") && cp -apP "{}" "/root/rootfs/{}"'
+    | xargs -I {} sh -c 'mkdir -p /rootfs/$(dirname "{}") && cp -apP "{}" "/rootfs/{}" && (strip --strip-all "/rootfs/{}" || true)'
 
 FROM --platform="${PLATFORM}" ${TARGET} AS target
 
 ARG BASE_BINS
 
-COPY --from=base "/root/rootfs" "/"
+COPY --from=base "/rootfs" "/"
 
 COPY --from=busybox "/bin/busybox" "/bin/busybox"
 RUN ["/bin/busybox", "--install", "-s"]
