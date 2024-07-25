@@ -3,7 +3,7 @@ ARG _DEB_VERSION="12"
 ARG PLATFORM="linux/arm64/v8"
 
 ARG BASE="debian:${_DEB_VERSION}"
-ARG BASE_PKGS="php"
+ARG BASE_PKGS="php binutils"
 ARG BASE_BINS="php"
 ARG BASE_PKG_INSTALL_CMD="apt-get update && apt-get install -y"
 
@@ -17,7 +17,8 @@ FROM --platform="${PLATFORM}" ${GOLANG} AS golang
 
 COPY "./" "/build"
 
-RUN cd "/build" \
+RUN apt-get update && apt-get install -y "binutils" \
+ && cd "/build" \
  &&   go get \
  &&   go build -o "/usr/local/bin/dependency_resolve" . \
  &&   strip --strip-all "/usr/local/bin/dependency_resolve" \
@@ -35,7 +36,7 @@ COPY --from=golang "/usr/local/bin/dependency_resolve" "/usr/local/bin/dependenc
 
 RUN /bin/sh -c "${BASE_PKG_INSTALL_CMD} ${BASE_PKGS}" \
  && /usr/local/bin/dependency_resolve \
-      $(echo "${BASE_BINS}" | xargs which) \
+      $(echo ${BASE_BINS} | xargs which) \
     | xargs -I {} sh -c 'mkdir -p /rootfs/$(dirname "{}") && cp -apP "{}" "/rootfs/{}" && (strip --strip-all "/rootfs/{}" || true)'
 
 FROM --platform="${PLATFORM}" ${TARGET} AS target

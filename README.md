@@ -14,7 +14,7 @@ RUN cd "/build" \
  &&   strip --strip-all "/usr/local/bin/dependency_resolve"
  && cd -
 COPY --from=golang "/usr/local/bin/dependency_resolve" "/usr/local/bin/dependency_resolve"
-RUN apt-get update && apt-get install -y "php"
+RUN apt-get update && apt-get install -y "binutils" "php"
 RUN /usr/local/bin/dependency_resolve "$(which "php")" | xargs -I {} sh -c 'mkdir -p /rootfs/$(dirname "{}") && cp -apP "{}" "/rootfs/{}" && (strip --strip-all "/rootfs/{}" || true)'
 
 FROM gcr.io/distroless/base-nossl-debian12:latest
