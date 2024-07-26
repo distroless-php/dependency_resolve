@@ -9,9 +9,7 @@ FROM debian:12 AS builder
 FROM --platform="${PLATFORM}" ${GOLANG} AS golang
 COPY "./" "/build"
 RUN cd "/build" \
- &&   go get \
  &&   go build -o "/usr/local/bin/dependency_resolve" . \
- &&   strip --strip-all "/usr/local/bin/dependency_resolve"
  && cd -
 COPY --from=golang "/usr/local/bin/dependency_resolve" "/usr/local/bin/dependency_resolve"
 RUN apt-get update && apt-get install -y "binutils" "php"

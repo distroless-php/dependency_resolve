@@ -17,11 +17,9 @@ FROM --platform="${PLATFORM}" ${GOLANG} AS golang
 
 COPY "./" "/build"
 
-RUN apt-get update && apt-get install -y "binutils" \
- && cd "/build" \
+RUN cd "/build" \
  &&   go get \
  &&   go build -o "/usr/local/bin/dependency_resolve" . \
- &&   strip --strip-all "/usr/local/bin/dependency_resolve" \
  && cd -
 
 FROM --platform="${PLATFORM}" ${BUSYBOX} AS busybox
